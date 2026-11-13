@@ -19,6 +19,25 @@ def init_db():
             conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         conn.commit()
     finally: conn.close()
+    upgrade_payloads()
+def upgrade_payloads():
+    # 旧数据升级：仅给历史数据集的试件行补 failure_cause=None（原因缺失→CIF不可估计）。
+    # 运行/复核/报告载荷一律不改写，历史结果保持原样。幂等，可重复执行。
+    conn,q = connect()
+    try:
+        stale = conn.execute("SELECT id,payload FROM datasets").fetchall()
+        for ds_id, payload in stale:
+            item = json.loads(payload)
+            changed = False
+            for row in item.get("rows", []):
+                if "failure_cause" not in row:
+                    row["failure_cause"] = None
+                    changed = True
+            if changed:
+                conn.execute(f"UPDATE datasets SET payload={q} WHERE id={q}",
+                             (json.dumps(item, ensure_ascii=False, allow_nan=False), ds_id))
+        conn.commit()
+    finally: conn.close()
 def all_rows(table):
     assert table in TABLES
     conn,_ = connect()
